@@ -1,0 +1,5 @@
+init
+reset halt
+FLASH
+reset
+exit
