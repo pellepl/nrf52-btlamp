@@ -1,37 +1,3 @@
-#include <stdint.h>
-
-#include "system_config.h"
-
-#include "nordic_common.h"
-
-#include "nrf.h"
-
-#include "ble_hci.h"
-
-#include "ble_advdata.h"
-
-#include "ble_advertising.h"
-
-#include "ble_conn_params.h"
-
-#include "softdevice_handler.h"
-
-#include "app_timer.h"
-
-#include "app_button.h"
-#include "ble_nus.h"
-#include "app_uart.h"
-#include "app_util_platform.h"
-#include "miniutils.h"
-
-#include "nrf_gpio.h"
-
-#include "nrf_drv_spi.h"
-
-#define BITMANIO_STORAGE_BITS 8
-#define BITMANIO_H_WHEREABOUTS "bitmanio.h"
-#include BITMANIO_H_WHEREABOUTS
-
 /* Copyright (c) 2014 Nordic Semiconductor. All Rights Reserved.
  *
  * The information contained herein is property of Nordic Semiconductor ASA.
@@ -69,6 +35,8 @@
 #include "ble_nus.h"
 #include "app_uart.h"
 #include "app_util_platform.h"
+#include "miniutils.h"
+#include "app.h"
 
 #define IS_SRVC_CHANGED_CHARACT_PRESENT 0                                           /**< Include the service_changed characteristic. If not enabled, the server's database cannot be changed for the lifetime of the device. */
 
@@ -81,14 +49,10 @@
 #define CENTRAL_LINK_COUNT              0                                           /**< Number of central links used by the application. When changing this number remember to adjust the RAM settings*/
 #define PERIPHERAL_LINK_COUNT           1                                           /**< Number of peripheral links used by the application. When changing this number remember to adjust the RAM settings*/
 
-#define DEVICE_NAME                     "Pelles_BT_lampa"                               /**< Name of device. Will be included in the advertising data. */
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_ADV_INTERVAL                64                                          /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
 #define APP_ADV_TIMEOUT_IN_SECONDS      180                                         /**< The advertising timeout (in units of seconds). */
-
-#define APP_TIMER_PRESCALER             0                                           /**< Value of the RTC1 PRESCALER register. */
-#define APP_TIMER_OP_QUEUE_SIZE         8                                           /**< Size of timer operation queues. */
 
 #define MIN_CONN_INTERVAL               MSEC_TO_UNITS(20, UNIT_1_25_MS)             /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
 #define MAX_CONN_INTERVAL               MSEC_TO_UNITS(75, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (75 ms), Connection interval uses 1.25 ms units. */
@@ -277,12 +241,12 @@ static void on_ble_evt(ble_evt_t * p_ble_evt) {
 
   switch (p_ble_evt->header.evt_id) {
   case BLE_GAP_EVT_CONNECTED:
-    print("on_ble_evt: connected\n");
+    app_on_connected();
     m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
     break; // BLE_GAP_EVT_CONNECTED
 
   case BLE_GAP_EVT_DISCONNECTED:
-    print("on_ble_evt: disconnected\n");
+    app_on_disconnected();
     m_conn_handle = BLE_CONN_HANDLE_INVALID;
     break; // BLE_GAP_EVT_DISCONNECTED
 
@@ -517,59 +481,6 @@ static void power_manage(void) {
 }
 
 
-/////////////////////////
-
-
-static const nrf_drv_spi_t spi = NRF_DRV_SPI_INSTANCE(0);
-APP_TIMER_DEF(tim_id);
-
-#define CODED_BYTES_PER_RGB_BYTE  5
-#define WS2812B_LEDS              16
-#define RGB_DATA_LEN \
-  (3 * WS2812B_LEDS * CODED_BYTES_PER_RGB_BYTE)
-
-#define CODE0 0b10000
-#define CODE1 0b11110
-
-static uint8_t spi_ws_buf[RGB_DATA_LEN];
-bitmanio_array8_t bio_arr;
-
-static void ws28128b_make_buffer(uint32_t rgb) {
-  // grb
-  rgb =
-      ((rgb & 0xff0000) >> 8) |
-      ((rgb & 0x00ff00) << 8) |
-      ((rgb & 0x0000ff));
-  // dim
-  rgb =
-      (((rgb & 0xff0000) / 3) & 0xff0000) |
-      (((rgb & 0x00ff00) / 3) & 0x00ff00) |
-      (((rgb & 0x0000ff) / 3) & 0x0000ff);
-  bitmanio_init_array8(&bio_arr, spi_ws_buf, CODED_BYTES_PER_RGB_BYTE);
-  uint32_t bix = 0;
-  int i, j;
-  for (i = 0; i < WS2812B_LEDS; i++) {
-    uint32_t d = (i & 2) ? rgb : 0;
-    for (j = 8*3-1; j >= 0; j--) {
-      bitmanio_set8(&bio_arr, bix++, (d >> j) & 1 ? CODE1 : CODE0);
-    }
-  }
-}
-
-static uint32_t def_rgb = 0x530000;
-static void test_timer_timeout_handler(void * p_context) {
-  //nrf_gpio_pin_toggle(PIN_LED_NUMBER);
-  //ws28128b_make_buffer(0x442808);
-  def_rgb = ((def_rgb << 1) | ((def_rgb & 0x00800000) >> 23)) & 0xffffff;
-  ws28128b_make_buffer(def_rgb);
-  uint32_t err_code = nrf_drv_spi_transfer(&spi, spi_ws_buf, sizeof(spi_ws_buf), NULL, 0);
-  print("tim: spi_tx res %i rgb%08x\n", err_code, def_rgb);
-}
-
-static void spi_handler(nrf_drv_spi_evt_t const * p_event) {
-  print("spi: hdl ev\n");
-}
-
 /**@brief Application main function.
  */
 int main(void) {
@@ -589,37 +500,7 @@ int main(void) {
   advertising_init();
   print("main: conn_params_init\n");
   conn_params_init();
-
-  print("main: starting test timer\n");
-
-  {
-    //nrf_gpio_cfg_output(PIN_LED_NUMBER);
-    err_code = app_timer_create(&tim_id, APP_TIMER_MODE_REPEATED, test_timer_timeout_handler);
-    print("main: tim_creat res %i\n", err_code);
-    err_code = app_timer_start(tim_id, APP_TIMER_TICKS(700, APP_TIMER_PRESCALER), NULL);
-    print("main: tim_start res %i\n", err_code);
-  }
-
-  print("main: starting test spi\n");
-
-  {
-
-    nrf_drv_spi_config_t config = {                                                            \
-        .sck_pin      = NRF_DRV_SPI_PIN_NOT_USED,
-        .mosi_pin     = PIN_LED_NUMBER, //NRF_DRV_SPI_PIN_NOT_USED,
-        .miso_pin     = NRF_DRV_SPI_PIN_NOT_USED,
-        .ss_pin       = NRF_DRV_SPI_PIN_NOT_USED,
-        .irq_priority = SPI_DEFAULT_CONFIG_IRQ_PRIORITY,
-        .orc          = 0xFF,
-        .frequency    = NRF_DRV_SPI_FREQ_4M,
-        .mode         = NRF_DRV_SPI_MODE_3,
-        .bit_order    = NRF_DRV_SPI_BIT_ORDER_MSB_FIRST,
-    };
-    err_code = nrf_drv_spi_init(&spi, &config, spi_handler);
-    print("main: spi_init res %i\n", err_code);
-
-  }
-
+  app_init();
   print("main: ALL SET: ble_advertising_start start\n");
   err_code = ble_advertising_start(BLE_ADV_MODE_FAST);
   APP_ERROR_CHECK(err_code);
