@@ -21,9 +21,10 @@
     app_uart_put((c));
 #define PUTB(p, b, l)  \
     do { \
-      u8_t *buf = (u8_t *)(b); \
-      int i; \
-      for (i = 0; i < (int)(l); i++) app_uart_put(*buf++); \
+      u8_t *___buf = (u8_t *)(b); \
+      int ___l = (int)(l); \
+      int ___i; \
+      for (___i = 0; ___i < ___l; ___i++) app_uart_put(*___buf++); \
     } while (0);
 
 

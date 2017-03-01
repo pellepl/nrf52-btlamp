@@ -10,7 +10,7 @@ GDB_PORT = 4444
 ############
 
 toolprefix = arm-none-eabi
-toolversion = 6.3.0
+toolversion = 6.1.0
 sourcedir = src
 builddir = build
 basetoolsdir = /home/petera/toolchain/${toolprefix}-toolchain-gcc-${toolversion}-hardfloat
@@ -55,7 +55,7 @@ MKDIR = mkdir -p
 LD_SCRIPT = arm.ld
 CFLAGS =  $(INC) $(FLAGS) 
 CFLAGS += -mcpu=cortex-m4 -mno-thumb-interwork -mthumb -mabi=aapcs
-CFLAGS += -Wall -Werror -O3 -g3
+CFLAGS += -Wall -Werror -Os -g3
 CFLAGS += -gdwarf-2 -Wno-packed-bitfield-compat
 CFLAGS += -mfloat-abi=hard -mfpu=fpv4-sp-d16
 CFLAGS += -ffunction-sections -fdata-sections -fno-strict-aliasing

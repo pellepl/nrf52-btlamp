@@ -1,5 +1,7 @@
 #include <stdint.h>
 
+#include "system_config.h"
+
 #include "nordic_common.h"
 
 #include "nrf.h"
@@ -22,102 +24,13 @@
 #include "app_util_platform.h"
 #include "miniutils.h"
 
-#define APP_TIMER_PRESCALER             0                                           /**< Value of the RTC1 PRESCALER register. */
-#define APP_TIMER_OP_QUEUE_SIZE         4                                           /**< Size of timer operation queues. */
-#define UART_TX_BUF_SIZE                256                                         /**< UART TX buffer size. */
-#define UART_RX_BUF_SIZE                256                                         /**< UART RX buffer size. */
+#include "nrf_gpio.h"
 
-#if 0
-static void power_manage(void)
-{
-  uint32_t err_code = sd_app_evt_wait();
-  APP_ERROR_CHECK(err_code);
-}
+#include "nrf_drv_spi.h"
 
-void uart_event_handle(app_uart_evt_t * p_event)
-{
-  uint32_t err_code;
-  (void)err_code;
-//    static uint8_t data_array[BLE_NUS_MAX_DATA_LEN];
-//    static uint8_t index = 0;
-  uint8_t dummy;
-
-  switch (p_event->evt_type)
-  {
-    case APP_UART_DATA_READY:
-    UNUSED_VARIABLE(app_uart_get(&dummy));
-#if 0
-    UNUSED_VARIABLE(app_uart_get(&data_array[index]));
-    index++;
-    if ((data_array[index - 1] == '\n') || (index >= (BLE_NUS_MAX_DATA_LEN)))
-    {
-      err_code = ble_nus_string_send(&m_nus, data_array, index);
-      if (err_code != NRF_ERROR_INVALID_STATE)
-      {
-        APP_ERROR_CHECK(err_code);
-      }
-
-      index = 0;
-    }
-#endif
-    break;
-
-    case APP_UART_COMMUNICATION_ERROR:
-    APP_ERROR_HANDLER(p_event->data.error_communication);
-    break;
-
-    case APP_UART_FIFO_ERROR:
-    APP_ERROR_HANDLER(p_event->data.error_code);
-    break;
-
-    default:
-    break;
-  }
-}
-static void uart_init(void)
-{
-  uint32_t err_code;
-  const app_uart_comm_params_t comm_params =
-  {
-    8, //RX_PIN_NUMBER,
-    6,//TX_PIN_NUMBER,
-    UART_PIN_DISCONNECTED,//RTS_PIN_NUMBER,
-    UART_PIN_DISCONNECTED,//CTS_PIN_NUMBER,
-    APP_UART_FLOW_CONTROL_DISABLED,
-    false,
-    UART_BAUDRATE_BAUDRATE_Baud115200
-  };
-
-  APP_UART_FIFO_INIT( &comm_params,
-      UART_RX_BUF_SIZE,
-      UART_TX_BUF_SIZE,
-      uart_event_handle,
-      APP_IRQ_PRIORITY_LOWEST,
-      err_code);
-  APP_ERROR_CHECK(err_code);
-}
-
-int main(void)
-{
-  APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_OP_QUEUE_SIZE, false);
-  volatile int a,j = 4;
-  uart_init();
-  // Enter main loop.
-  for (;;)
-  {
-    int i;
-    for (i=0; i < 50; i++) {
-      (void)app_uart_put('0' + (j+i)%10);
-    }
-    (void)app_uart_put('\n');
-    a = 0x400000;
-    while(a--);
-    j++;
-  }
-  power_manage();
-}
-
-#else
+#define BITMANIO_STORAGE_BITS 8
+#define BITMANIO_H_WHEREABOUTS "bitmanio.h"
+#include BITMANIO_H_WHEREABOUTS
 
 /* Copyright (c) 2014 Nordic Semiconductor. All Rights Reserved.
  *
@@ -175,7 +88,7 @@ int main(void)
 #define APP_ADV_TIMEOUT_IN_SECONDS      180                                         /**< The advertising timeout (in units of seconds). */
 
 #define APP_TIMER_PRESCALER             0                                           /**< Value of the RTC1 PRESCALER register. */
-#define APP_TIMER_OP_QUEUE_SIZE         4                                           /**< Size of timer operation queues. */
+#define APP_TIMER_OP_QUEUE_SIZE         8                                           /**< Size of timer operation queues. */
 
 #define MIN_CONN_INTERVAL               MSEC_TO_UNITS(20, UNIT_1_25_MS)             /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
 #define MAX_CONN_INTERVAL               MSEC_TO_UNITS(75, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (75 ms), Connection interval uses 1.25 ms units. */
@@ -331,12 +244,6 @@ static void conn_params_init(void) {
  */
 static void sleep_mode_enter(void) {
   uint32_t err_code;
-  //= bsp_indication_set(BSP_INDICATE_IDLE);
-  //APP_ERROR_CHECK(err_code);
-
-  // Prepare wakeup buttons.
-  //err_code = bsp_btn_ble_sleep_mode_prepare();
-  //APP_ERROR_CHECK(err_code);
 
   // Go to system-off mode (this function will not return; wakeup will cause a reset).
   err_code = sd_power_system_off();
@@ -352,7 +259,6 @@ static void sleep_mode_enter(void) {
 static void on_adv_evt(ble_adv_evt_t ble_adv_evt) {
   switch (ble_adv_evt) {
   case BLE_ADV_EVT_FAST:
-    print("IND ADV\n");
     break;
   case BLE_ADV_EVT_IDLE:
     sleep_mode_enter();
@@ -371,18 +277,17 @@ static void on_ble_evt(ble_evt_t * p_ble_evt) {
 
   switch (p_ble_evt->header.evt_id) {
   case BLE_GAP_EVT_CONNECTED:
-    //err_code = bsp_indication_set(BSP_INDICATE_CONNECTED);
-    //APP_ERROR_CHECK(err_code);
+    print("on_ble_evt: connected\n");
     m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
     break; // BLE_GAP_EVT_CONNECTED
 
   case BLE_GAP_EVT_DISCONNECTED:
-    //err_code = bsp_indication_set(BSP_INDICATE_IDLE);
-    //APP_ERROR_CHECK(err_code);
+    print("on_ble_evt: disconnected\n");
     m_conn_handle = BLE_CONN_HANDLE_INVALID;
     break; // BLE_GAP_EVT_DISCONNECTED
 
   case BLE_GAP_EVT_SEC_PARAMS_REQUEST:
+    print("on_ble_evt: sec params req\n");
     // Pairing not supported
     err_code = sd_ble_gap_sec_params_reply(m_conn_handle,
         BLE_GAP_SEC_STATUS_PAIRING_NOT_SUPP, NULL, NULL);
@@ -390,12 +295,14 @@ static void on_ble_evt(ble_evt_t * p_ble_evt) {
     break; // BLE_GAP_EVT_SEC_PARAMS_REQUEST
 
   case BLE_GATTS_EVT_SYS_ATTR_MISSING:
+    print("on_ble_evt: sys attr missing\n");
     // No system attributes have been stored.
     err_code = sd_ble_gatts_sys_attr_set(m_conn_handle, NULL, 0, 0);
     APP_ERROR_CHECK(err_code);
     break; // BLE_GATTS_EVT_SYS_ATTR_MISSING
 
   case BLE_GATTC_EVT_TIMEOUT:
+    print("on_ble_evt: gattc tmo\n");
     // Disconnect on GATT Client timeout event.
     err_code = sd_ble_gap_disconnect(p_ble_evt->evt.gattc_evt.conn_handle,
     BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
@@ -403,6 +310,7 @@ static void on_ble_evt(ble_evt_t * p_ble_evt) {
     break; // BLE_GATTC_EVT_TIMEOUT
 
   case BLE_GATTS_EVT_TIMEOUT:
+    print("on_ble_evt: evt tmo\n");
     // Disconnect on GATT Server timeout event.
     err_code = sd_ble_gap_disconnect(p_ble_evt->evt.gatts_evt.conn_handle,
     BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
@@ -410,12 +318,14 @@ static void on_ble_evt(ble_evt_t * p_ble_evt) {
     break; // BLE_GATTS_EVT_TIMEOUT
 
   case BLE_EVT_USER_MEM_REQUEST:
+    print("on_ble_evt: user mem req\n");
     err_code = sd_ble_user_mem_reply(p_ble_evt->evt.gattc_evt.conn_handle,
         NULL);
     APP_ERROR_CHECK(err_code);
     break; // BLE_EVT_USER_MEM_REQUEST
 
   case BLE_GATTS_EVT_RW_AUTHORIZE_REQUEST: {
+    print("on_ble_evt: auth req\n");
     ble_gatts_evt_rw_authorize_request_t req;
     ble_gatts_rw_authorize_reply_params_t auth_reply;
 
@@ -466,8 +376,6 @@ static void ble_evt_dispatch(ble_evt_t * p_ble_evt) {
   ble_nus_on_ble_evt(&m_nus, p_ble_evt);
   on_ble_evt(p_ble_evt);
   ble_advertising_on_ble_evt(p_ble_evt);
-  //bsp_btn_ble_on_ble_evt(p_ble_evt);
-
 }
 
 /**@brief Function for the SoftDevice initialization.
@@ -557,8 +465,8 @@ void uart_event_handle(app_uart_evt_t * p_event) {
 static void uart_init(void) {
   uint32_t err_code;
   const app_uart_comm_params_t comm_params = {
-      8, //RX_PIN_NUMBER,
-      6, //TX_PIN_NUMBER,
+      PIN_UART_RX_NUMBER,
+      PIN_UART_TX_NUMBER,
       UART_PIN_DISCONNECTED, //RTS_PIN_NUMBER,
       UART_PIN_DISCONNECTED, //CTS_PIN_NUMBER,
       APP_UART_FLOW_CONTROL_DISABLED,
@@ -567,7 +475,7 @@ static void uart_init(void) {
   };
 
   APP_UART_FIFO_INIT(&comm_params, UART_RX_BUF_SIZE, UART_TX_BUF_SIZE,
-      uart_event_handle, APP_IRQ_PRIORITY_LOWEST, err_code);
+      uart_event_handle, APP_IRQ_PRIORITY_LOW, err_code);
   APP_ERROR_CHECK(err_code);
 }
 /**@snippet [UART Initialization] */
@@ -608,6 +516,60 @@ static void power_manage(void) {
   APP_ERROR_CHECK(err_code);
 }
 
+
+/////////////////////////
+
+
+static const nrf_drv_spi_t spi = NRF_DRV_SPI_INSTANCE(0);
+APP_TIMER_DEF(tim_id);
+
+#define CODED_BYTES_PER_RGB_BYTE  5
+#define WS2812B_LEDS              16
+#define RGB_DATA_LEN \
+  (3 * WS2812B_LEDS * CODED_BYTES_PER_RGB_BYTE)
+
+#define CODE0 0b10000
+#define CODE1 0b11110
+
+static uint8_t spi_ws_buf[RGB_DATA_LEN];
+bitmanio_array8_t bio_arr;
+
+static void ws28128b_make_buffer(uint32_t rgb) {
+  // grb
+  rgb =
+      ((rgb & 0xff0000) >> 8) |
+      ((rgb & 0x00ff00) << 8) |
+      ((rgb & 0x0000ff));
+  // dim
+  rgb =
+      (((rgb & 0xff0000) / 3) & 0xff0000) |
+      (((rgb & 0x00ff00) / 3) & 0x00ff00) |
+      (((rgb & 0x0000ff) / 3) & 0x0000ff);
+  bitmanio_init_array8(&bio_arr, spi_ws_buf, CODED_BYTES_PER_RGB_BYTE);
+  uint32_t bix = 0;
+  int i, j;
+  for (i = 0; i < WS2812B_LEDS; i++) {
+    uint32_t d = (i & 2) ? rgb : 0;
+    for (j = 8*3-1; j >= 0; j--) {
+      bitmanio_set8(&bio_arr, bix++, (d >> j) & 1 ? CODE1 : CODE0);
+    }
+  }
+}
+
+static uint32_t def_rgb = 0x530000;
+static void test_timer_timeout_handler(void * p_context) {
+  //nrf_gpio_pin_toggle(PIN_LED_NUMBER);
+  //ws28128b_make_buffer(0x442808);
+  def_rgb = ((def_rgb << 1) | ((def_rgb & 0x00800000) >> 23)) & 0xffffff;
+  ws28128b_make_buffer(def_rgb);
+  uint32_t err_code = nrf_drv_spi_transfer(&spi, spi_ws_buf, sizeof(spi_ws_buf), NULL, 0);
+  print("tim: spi_tx res %i rgb%08x\n", err_code, def_rgb);
+}
+
+static void spi_handler(nrf_drv_spi_evt_t const * p_event) {
+  print("spi: hdl ev\n");
+}
+
 /**@brief Application main function.
  */
 int main(void) {
@@ -617,16 +579,50 @@ int main(void) {
   APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_OP_QUEUE_SIZE, false);
   uart_init();
 
+  print("\n\nmain: ble_stack_init\n");
   ble_stack_init();
+  print("main: gap_params_init\n");
   gap_params_init();
+  print("main: services_init\n");
   services_init();
+  print("main: advertising_init\n");
   advertising_init();
+  print("main: conn_params_init\n");
   conn_params_init();
 
-  print("\r\nUART Start!\r\n");
+  print("main: starting test timer\n");
+
+  {
+    //nrf_gpio_cfg_output(PIN_LED_NUMBER);
+    err_code = app_timer_create(&tim_id, APP_TIMER_MODE_REPEATED, test_timer_timeout_handler);
+    print("main: tim_creat res %i\n", err_code);
+    err_code = app_timer_start(tim_id, APP_TIMER_TICKS(700, APP_TIMER_PRESCALER), NULL);
+    print("main: tim_start res %i\n", err_code);
+  }
+
+  print("main: starting test spi\n");
+
+  {
+
+    nrf_drv_spi_config_t config = {                                                            \
+        .sck_pin      = NRF_DRV_SPI_PIN_NOT_USED,
+        .mosi_pin     = PIN_LED_NUMBER, //NRF_DRV_SPI_PIN_NOT_USED,
+        .miso_pin     = NRF_DRV_SPI_PIN_NOT_USED,
+        .ss_pin       = NRF_DRV_SPI_PIN_NOT_USED,
+        .irq_priority = SPI_DEFAULT_CONFIG_IRQ_PRIORITY,
+        .orc          = 0xFF,
+        .frequency    = NRF_DRV_SPI_FREQ_4M,
+        .mode         = NRF_DRV_SPI_MODE_3,
+        .bit_order    = NRF_DRV_SPI_BIT_ORDER_MSB_FIRST,
+    };
+    err_code = nrf_drv_spi_init(&spi, &config, spi_handler);
+    print("main: spi_init res %i\n", err_code);
+
+  }
+
+  print("main: ALL SET: ble_advertising_start start\n");
   err_code = ble_advertising_start(BLE_ADV_MODE_FAST);
   APP_ERROR_CHECK(err_code);
-
   // Enter main loop.
   for (;;) {
     power_manage();
@@ -636,4 +632,3 @@ int main(void) {
 /**
  * @}
  */
-#endif
