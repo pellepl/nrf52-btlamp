@@ -16,6 +16,7 @@ CFILES += \
   $(SDK_ROOT)/components/drivers_nrf/gpiote/nrf_drv_gpiote.c \
   $(SDK_ROOT)/components/drivers_nrf/uart/nrf_drv_uart.c \
   $(SDK_ROOT)/components/drivers_nrf/spi_master/nrf_drv_spi.c \
+  $(SDK_ROOT)/components/drivers_nrf/ble_flash/ble_flash.c \
   $(SDK_ROOT)/components/ble/common/ble_advdata.c \
   $(SDK_ROOT)/components/ble/ble_advertising/ble_advertising.c \
   $(SDK_ROOT)/components/ble/common/ble_conn_params.c \
@@ -40,6 +41,7 @@ INC_FOLDERS += \
   $(SDK_ROOT)/components/libraries/fstorage \
   $(SDK_ROOT)/components/drivers_nrf/i2s \
   $(SDK_ROOT)/components/drivers_nrf/gpiote \
+  $(SDK_ROOT)/components/drivers_nrf/ble_flash \
   $(SDK_ROOT)/components/libraries/fifo \
   $(SDK_ROOT)/components/drivers_nrf/common \
   $(SDK_ROOT)/components/ble/ble_advertising \

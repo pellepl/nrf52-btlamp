@@ -85,7 +85,7 @@ INC += $(INC_PATHS)
 
 AFLAGS += -D__START=main -D__STARTUP_CLEAR_BSS
 SFILES += memset.S memcpy.S
-CFILES += main.c app.c
+CFILES += main.c app.c tnv.c bitmanio_impl.c
 CFILES += miniutils.c
 
 LIBS = -L${basetoolsdir}/lib/gcc/${toolprefix}/${toolversion} -lgcc

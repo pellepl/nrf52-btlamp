@@ -23,13 +23,13 @@
 /**
  * bitmanio.h
  * Bit manipulation IO - break free of the fixed bit size tyranny
- * 
+ *
  * This library gives variable bit range access to memory, either as
- * streams or as arrays. Streams will give dynamic bit range access 
+ * streams or as arrays. Streams will give dynamic bit range access
  * while arrays give fixed bit range access.
- * 
- * The underlying memory buffer can be defined as 8, 16, 32, or 64 
- * bit arrays. Bitmanio can only handle bit ranges up to underlying 
+ *
+ * The underlying memory buffer can be defined as 8, 16, 32, or 64
+ * bit arrays. Bitmanio can only handle bit ranges up to underlying
  * memory size. If you compile bitmanio to tampering with e.g. 16 bit
  * memory, the variable bit range will comprise from 1 to 16 bits.
  * However, all variants can be exist simultaneously as the API will
@@ -43,10 +43,10 @@
  *   void bitmanio_init_stream16(bitmanio_stream16_t *bs, uint16_t *mem);
  *   uint16_t bitmanio_read16(bitmanio_stream16_t *bs, uint8_t bits);
  *   ... etc
- * 
+ *
  * Bitmanio has an upper limit of 2^23 number of bytes in total for an
  * array or stream.
- * 
+ *
  * The header file contains both API and implementation.
  * To include this library as both header and implementation in your
  * source, define
@@ -58,13 +58,13 @@
  * along with the number of storage bits before including bitmanio.h.
  *
  * Example 1 - use 8-bit variant in only one file:
- * //file:bitmanio_tester_8.c 
+ * //file:bitmanio_tester_8.c
  *   #define BITMANIO_STORAGE_BITS 8
  *   #include "bitmanio.h"
  *   <.. code using the library ..>
  *
  * Example 2 - use 8-bit and 32-bit variants in only one file:
- * //file:bitmanio_tester_8_and_32.c 
+ * //file:bitmanio_tester_8_and_32.c
  *   #define BITMANIO_STORAGE_BITS 8
  *   #include "bitmanio.h"
  *   #define BITMANIO_STORAGE_BITS 32
@@ -167,7 +167,7 @@ typedef struct {
  * @param mem pointer memory where stream is read from or written to.
  */
 void __BM_FN(bitmanio_init_stream, __BM_FN_PF)(
-  __BM_TP(bitmanio_stream, __BM_FN_PF) *bs, 
+  __BM_TP(bitmanio_stream, __BM_FN_PF) *bs,
   __BM_TYPE *mem)
 #ifndef __BM_IMPLEMENTATION
 ;
@@ -186,7 +186,7 @@ void __BM_FN(bitmanio_init_stream, __BM_FN_PF)(
  * @return read value from stream
  */
 __BM_TYPE __BM_FN(bitmanio_read, __BM_FN_PF)(
-  __BM_TP(bitmanio_stream, __BM_FN_PF) *bs, 
+  __BM_TP(bitmanio_stream, __BM_FN_PF) *bs,
   uint8_t bits)
 #ifndef __BM_IMPLEMENTATION
 ;
@@ -205,6 +205,36 @@ __BM_TYPE __BM_FN(bitmanio_read, __BM_FN_PF)(
     bs->b_offs &= (__BM_TBITS - 1);
     bs->m_offs++;
   }
+  return bits == __BM_TBITS ? v : v & (((__BM_TYPE)1<<bits) - 1);
+}
+#endif
+/**
+ * Reads from bitmanio memory stream.
+ * @param bs    pointer a bitmanio_stream<X>_t struct
+ * @param bits  number of bits to read
+ * @return read value from stream
+ */
+__BM_TYPE __BM_FN(bitmanio_read_z, __BM_FN_PF)(
+  __BM_TP(bitmanio_stream, __BM_FN_PF) *bs,
+  uint8_t bits)
+#ifndef __BM_IMPLEMENTATION
+;
+#else
+{
+  __BM_TYPE v = 0;
+  __BM_TYPE *d = &bs->mem[bs->m_offs];
+  if (bs->b_offs + bits > __BM_TBITS) {
+    uint8_t shift = 2 * __BM_TBITS - (bs->b_offs + bits);
+    v = (d[1] >> shift) | (d[0] << (__BM_TBITS - shift));
+  } else {
+    v = d[0] >> (__BM_TBITS - (bits + bs->b_offs));
+  }
+  bs->b_offs += bits;
+  if (bs->b_offs >= __BM_TBITS) {
+    bs->b_offs &= (__BM_TBITS - 1);
+    bs->m_offs++;
+  }
+  v = ~v;
   return bits == __BM_TBITS ? v : v & (((__BM_TYPE)1<<bits) - 1);
 }
 #endif
@@ -231,6 +261,37 @@ void __BM_FN(bitmanio_write, __BM_FN_PF)(
     d[0] |= v >> (__BM_TBITS - shift);
   } else {
     d[0] |= v << (__BM_TBITS - (bits + bs->b_offs));
+  }
+  bs->b_offs += bits;
+  if (bs->b_offs >= __BM_TBITS) {
+    bs->b_offs &= (__BM_TBITS - 1);
+    bs->m_offs++;
+  }
+}
+#endif
+
+/**
+ * Writes to bitmanio memory stream.
+ * @param bs   pointer a bitmanio_stream<X>_t struct
+ * @param v    the value to write
+ * @param bits number of bits to write
+ */
+void __BM_FN(bitmanio_write_z, __BM_FN_PF)(
+  __BM_TP(bitmanio_stream, __BM_FN_PF) *bs,
+  __BM_TYPE v,
+  uint8_t bits)
+#ifndef __BM_IMPLEMENTATION
+;
+#else
+{
+  v &= bits == __BM_TBITS ? (__BM_TYPE)~0 : (__BM_TYPE)(((__BM_TYPE)1<<bits) - 1);
+  __BM_TYPE *d = &bs->mem[bs->m_offs];
+  if (bs->b_offs + bits > __BM_TBITS) {
+    uint8_t shift = 2 * __BM_TBITS - (bs->b_offs + bits);
+    d[1] &= ~(v << shift);
+    d[0] &= ~(v >> (__BM_TBITS - shift));
+  } else {
+    d[0] &= ~(v << (__BM_TBITS - (bits + bs->b_offs)));
   }
   bs->b_offs += bits;
   if (bs->b_offs >= __BM_TBITS) {
@@ -282,7 +343,7 @@ uint32_t __BM_FN(bitmanio_getpos, __BM_FN_PF)(
  */
 void __BM_FN(bitmanio_init_array, __BM_FN_PF)(
   __BM_TP(bitmanio_array, __BM_FN_PF) *ba,
-  __BM_TYPE *mem, 
+  __BM_TYPE *mem,
   uint8_t bits)
 #ifndef __BM_IMPLEMENTATION
 ;

@@ -52,7 +52,7 @@
 #define NUS_SERVICE_UUID_TYPE           BLE_UUID_TYPE_VENDOR_BEGIN                  /**< UUID type for the Nordic UART Service (vendor specific). */
 
 #define APP_ADV_INTERVAL                64                                          /**< The advertising interval (in units of 0.625 ms. This value corresponds to 40 ms). */
-#define APP_ADV_TIMEOUT_IN_SECONDS      180                                         /**< The advertising timeout (in units of seconds). */
+#define APP_ADV_TIMEOUT_IN_SECONDS      0 //no adv timeout 180                                    /**< The advertising timeout (in units of seconds). */
 
 #define MIN_CONN_INTERVAL               MSEC_TO_UNITS(20, UNIT_1_25_MS)             /**< Minimum acceptable connection interval (20 ms), Connection interval uses 1.25 ms units. */
 #define MAX_CONN_INTERVAL               MSEC_TO_UNITS(75, UNIT_1_25_MS)             /**< Maximum acceptable connection interval (75 ms), Connection interval uses 1.25 ms units. */
@@ -127,14 +127,7 @@ static void gap_params_init(void) {
 /**@snippet [Handling the data received over BLE] */
 static void nus_data_handler(ble_nus_t * p_nus, uint8_t * p_data,
     uint16_t length) {
-  for (uint32_t i = 0; i < length; i++) {
-    while (app_uart_put(p_data[i]) != NRF_SUCCESS)
-      ;
-  }
-  while (app_uart_put('\r') != NRF_SUCCESS)
-    ;
-  while (app_uart_put('\n') != NRF_SUCCESS)
-    ;
+  app_on_data(p_data, length);
 }
 /**@snippet [Handling the data received over BLE] */
 
@@ -456,7 +449,8 @@ static void advertising_init(void) {
   memset(&advdata, 0, sizeof(advdata));
   advdata.name_type = BLE_ADVDATA_FULL_NAME;
   advdata.include_appearance = false;
-  advdata.flags = BLE_GAP_ADV_FLAGS_LE_ONLY_LIMITED_DISC_MODE;
+  //advdata.flags = BLE_GAP_ADV_FLAGS_LE_ONLY_LIMITED_DISC_MODE; // not working without adv timeout
+  advdata.flags = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
 
   memset(&scanrsp, 0, sizeof(scanrsp));
   scanrsp.uuids_complete.uuid_cnt = sizeof(m_adv_uuids)
@@ -480,17 +474,11 @@ static void power_manage(void) {
   APP_ERROR_CHECK(err_code);
 }
 
+static bool _app_inited = FALSE;
 
-/**@brief Application main function.
- */
-int main(void) {
+void start_softdevice(void) {
   uint32_t err_code;
-
-  // Initialize.
-  APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_OP_QUEUE_SIZE, false);
-  uart_init();
-
-  print("\n\nmain: ble_stack_init\n");
+  print("main: ble_stack_init\n");
   ble_stack_init();
   print("main: gap_params_init\n");
   gap_params_init();
@@ -500,10 +488,25 @@ int main(void) {
   advertising_init();
   print("main: conn_params_init\n");
   conn_params_init();
-  app_init();
+  if (!_app_inited) {
+    _app_inited = TRUE;
+    app_init();
+  }
   print("main: ALL SET: ble_advertising_start start\n");
   err_code = ble_advertising_start(BLE_ADV_MODE_FAST);
   APP_ERROR_CHECK(err_code);
+
+}
+
+/**@brief Application main function.
+ */
+int main(void) {
+  // Initialize.
+  APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_OP_QUEUE_SIZE, false);
+  uart_init();
+
+  start_softdevice();
+
   // Enter main loop.
   for (;;) {
     power_manage();

@@ -4,8 +4,14 @@
 #include "miniutils.h"
 #include "nrf_drv_spi.h"
 #include "app_timer.h"
+#include "hardfault.h"
+#include "softdevice_handler.h"
+#include "ble_flash.h"
+#include "tnv.h"
+
 #define BITMANIO_STORAGE_BITS 8
 #define BITMANIO_H_WHEREABOUTS "bitmanio.h"
+#define BITMANIO_HEADER
 #include BITMANIO_H_WHEREABOUTS
 
 #define CODED_BYTES_PER_RGB_BYTE  5
@@ -19,14 +25,31 @@
 #define ANIM_NONE         0
 #define ANIM_CONNECT      1
 #define ANIM_DISCONNECT   2
+#define ANIM_ERROR        3
 
+#define TNV_RGB           1
+#define TNV_INTENSITY     2
+
+#define TEST_FLASH
 
 typedef struct anim_s {
   uint32_t rgb;
   uint16_t ms;
 } anim_t;
 
-APP_TIMER_DEF(tim_id);
+static const uint8_t GAMMA[] = {
+   37, 38, 39, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 50,
+   51, 52, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 66, 67, 68,
+   69, 70, 72, 73, 74, 75, 77, 78, 79, 81, 82, 83, 85, 86, 87, 89,
+   90, 92, 93, 95, 96, 98, 99,101,102,104,105,107,109,110,112,114,
+  115,117,119,120,122,124,126,127,129,131,133,135,137,138,140,142,
+  144,146,148,150,152,154,156,158,160,162,164,167,169,171,173,175,
+  177,180,182,184,186,189,191,193,196,198,200,203,205,208,210,213,
+  215,218,220,223,225,228,231,233,236,239,241,244,247,249,252,255 };
+
+APP_TIMER_DEF(tim_anim_id);
+APP_TIMER_DEF(tim_lamp_id);
+APP_TIMER_DEF(tim_save_id);
 const nrf_drv_spi_t spi = NRF_DRV_SPI_INSTANCE(0);
 static struct app {
   uint8_t spi_ws_buf[RGB_DATA_LEN];
@@ -34,9 +57,11 @@ static struct app {
   int anim_ix;
   uint32_t rgb[WS2812B_LEDS];
   uint32_t lamp_rgb;
+  uint32_t lamp_intens;
   volatile bool lamp_dirty;
   volatile bool lamp_tx;
-}app;
+  tnv_t tnv;
+} app;
 
 static void ws2812b_make_buffer(uint32_t *rgb) {
   bitmanio_array8_t bio_arr;
@@ -45,10 +70,20 @@ static void ws2812b_make_buffer(uint32_t *rgb) {
   int i, j;
   for (i = 0; i < WS2812B_LEDS; i++) {
     uint32_t d = *rgb++;
-    d =
-        ((d & 0xff0000) >> 8) |
-        ((d & 0x00ff00) << 8) |
-        ((d & 0x0000ff));
+    uint16_t r = (d>>16)&0xff;
+    uint16_t g = (d>>8)&0xff;
+    uint16_t b = (d)&0xff;
+    if (app.lamp_intens < 10) {
+      uint8_t intens = GAMMA[(sizeof(GAMMA) * app.lamp_intens) / 10];
+      r = (r * intens) >> 8;
+      g = (g * intens) >> 8;
+      b = (b * intens) >> 8;
+    }
+    r &= 0xff;
+    g &= 0xff;
+    b &= 0xff;
+
+    d = (g << 16) | (r << 8) | b;
     for (j = 8*3-1; j >= 0; j--) {
       bitmanio_set8(&bio_arr, bix++, (d >> j) & 1 ? CODE1 : CODE0);
     }
@@ -56,35 +91,46 @@ static void ws2812b_make_buffer(uint32_t *rgb) {
 }
 
 static void spi_handler(nrf_drv_spi_evt_t const * p_event) {
-  print("spi.finished dirty:%i\n", app.lamp_dirty);
+  //print("spi.finished dirty:%i\n", app.lamp_dirty);
+  app.lamp_tx = false;
   if (app.lamp_dirty) {
     app.lamp_dirty = false;
-    app_timer_start(tim_id, APP_TIMER_TICKS(25, APP_TIMER_PRESCALER), NULL);
+    app_timer_start(tim_lamp_id, APP_TIMER_TICKS(5, APP_TIMER_PRESCALER), NULL);
   }
-  app.lamp_tx = false;
 }
 
-static void app_lamp_tx(void) {
+static void lamp_tx(void) {
   app.lamp_tx = true;
   ws2812b_make_buffer(app.rgb);
   nrf_drv_spi_transfer(&spi, app.spi_ws_buf, sizeof(app.spi_ws_buf), NULL, 0);
 }
 
-static void app_lamp_update(void) {
-  print("app.lamp_update tx:%i\n", app.lamp_tx);
+static void lamp_update(void) {
+  //print("app.lamp_update tx:%i\n", app.lamp_tx);
   if (app.lamp_tx) {
     app.lamp_dirty = true;
   } else {
     app.lamp_dirty = false;
-    app_lamp_tx();
+    lamp_tx();
   }
 }
 
-static void app_lamp_set(uint32_t rgb) {
+static void lamp_set_color(uint32_t rgb, bool store) {
   app.lamp_rgb = rgb;
+  print("app.lamp_color:%06x\n", rgb);
   int i;
-  for (i = 0; i < WS2812B_LEDS; i++) app.rgb[i] = rgb;
-  app_lamp_update();
+  for (i = 0; i < WS2812B_LEDS; i++) {
+    app.rgb[i] = rgb ? rgb : (rand_next() & 0xffffff);
+  }
+  lamp_update();
+  if (store) tnv_set(&app.tnv, TNV_RGB, 32, rgb);
+}
+
+static void lamp_set_intensity(uint32_t i, bool store) {
+  app.lamp_intens = i;
+  print("app.lamp_intensity:%i\n", i);
+  lamp_update();
+  if (store) tnv_set(&app.tnv, TNV_INTENSITY, 4, i);
 }
 
 
@@ -92,76 +138,249 @@ static void start_anim(int anim) {
   app.anim = anim;
   app.anim_ix = 0;
   if (anim == 0) {
-    app_timer_stop(tim_id);
-    app_lamp_set(app.lamp_rgb);
+    app_timer_stop(tim_anim_id);
+    lamp_set_color(app.lamp_rgb, FALSE);
     return;
   }
 
-  app_timer_start(tim_id, APP_TIMER_TICKS(100, APP_TIMER_PRESCALER), NULL);
+  app_timer_start(tim_anim_id, APP_TIMER_TICKS(100, APP_TIMER_PRESCALER), NULL);
 }
 
 static void anim_timer(void * p_context) {
   uint32_t call_again = 0;
   app.anim_ix++;
   switch (app.anim) {
-  case ANIM_CONNECT:
+  case ANIM_CONNECT: {
+    int i;
     memset(app.rgb, 0, sizeof(app.rgb));
-    app.rgb[app.anim_ix-1] = 0x00ff00;
-    app_lamp_update();
-    call_again = app.anim_ix >= WS2812B_LEDS ? 0 : 100;
+    for (i = 1; i < 8; i++) {
+      app.rgb[(app.anim_ix -1 + i) % WS2812B_LEDS] = 0x002211 * i;
+    }
+    lamp_update();
+    call_again = app.anim_ix >= WS2812B_LEDS*5 ? 0 : 40;
     break;
-  case ANIM_DISCONNECT:
+  }
+  case ANIM_DISCONNECT: {
+    int i;
     memset(app.rgb, 0, sizeof(app.rgb));
-    app.rgb[WS2812B_LEDS - app.anim_ix] = 0xff0000;
-    app_lamp_update();
-    call_again = app.anim_ix >= WS2812B_LEDS ? 0 : 100;
+    for (i = 1; i < 8; i++) {
+      app.rgb[(5*WS2812B_LEDS - app.anim_ix - i) % WS2812B_LEDS] = 0x220011 * i;
+    }
+    lamp_update();
+    call_again = app.anim_ix >= WS2812B_LEDS*5 ? 0 : 40;
     break;
+  }
+  case ANIM_ERROR: {
+    int i;
+    memset(app.rgb, 0, sizeof(app.rgb));
+    if (app.anim_ix & 1) {
+      for (i = 0; i < WS2812B_LEDS/2; i++) {
+        if ((app.anim_ix>>1) & 1) {
+          app.rgb[(WS2812B_LEDS/2 + i) % WS2812B_LEDS] = 0xff0000;
+        } else {
+          app.rgb[i] = 0xff0000;
+        }
+      }
+    }
+    lamp_update();
+    call_again = app.anim_ix >= 20 ? 0 : 400;
+    break;
+  }
   }
   if (call_again == 0) {
     start_anim(ANIM_NONE);
   } else {
-    app_timer_start(tim_id, APP_TIMER_TICKS(call_again, APP_TIMER_PRESCALER), NULL);
+    app_timer_start(tim_anim_id, APP_TIMER_TICKS(call_again, APP_TIMER_PRESCALER), NULL);
   }
+}
+static void lamp_timer(void * p_context) {
+  lamp_update();
+}
+
+#ifdef TEST_FLASH
+static uint32_t _flash[1024/4];
+#endif
+
+uint32_t flash_write_fn(uint8_t *buf, uint32_t offs, uint32_t len, uint8_t *src) {
+  // align src to 32 bits
+  uint32_t start = (uint32_t)(buf + offs);
+  uint32_t end = (uint32_t)(buf + offs + len);
+  uint32_t start_align_pre = (start & 3);
+  uint32_t end_align_post = (end & 3) == 0 ? 0 : (4 - (end & 3));
+  uint32_t aligned_size = (end + end_align_post) - (start - start_align_pre);
+  uint32_t wbuf[aligned_size/4];
+  memset(wbuf, 0xff, aligned_size);
+  memcpy((uint8_t *)wbuf + start_align_pre, src, len);
+  uint32_t *flash_addr = (uint32_t *)(start - start_align_pre);
+  print("app.flash write @ %08x, len %i\n", flash_addr, aligned_size);
+#ifdef TEST_FLASH
+  int i;
+  for (i = 0; i < len; i++) {
+    uint32_t ix = (((uint32_t)flash_addr) - (uint32_t)app.tnv.buf) / 4 + i;
+    _flash[ix] &= ~wbuf[i];
+  }
+  return 0;
+#else
+  return ble_flash_block_write(flash_addr, wbuf, aligned_size/4);
+#endif
+}
+
+uint32_t flash_erase_fn(uint8_t *buf) {
+#ifdef TEST_FLASH
+  memset(_flash, 0xff, sizeof(_flash));
+  print("app.flash erase page TEST\n");
+  return 0;
+#else
+  uint8_t page = (uint32_t)buf / BLE_FLASH_PAGE_SIZE;
+  uint32_t err_code = ble_flash_page_erase(page);
+  print("app.flash erase page %i res %i\n", page, err_code);
+  return err_code;
+#endif
+}
+
+
+static void save_timer(void * p_context) {
+  tnv_commit(&app.tnv);
+#if 0
+  uint32_t err_code;
+  err_code = softdevice_handler_sd_disable();
+  print("app.softdevice disabled res %i\n", err_code);
+  volatile int a = 0x2000;
+  while(a--);
+
+  print("app.erase last page\n");
+  a = 0x2000;
+  while(a--);
+
+  err_code = ble_flash_page_erase(BLE_FLASH_PAGE_END-1);
+  print("app.erase last page res %i\n", err_code);
+
+
+  print("app.softdevice enabling\n");
+  a = 0x2000;
+  while(a--);
+  start_softdevice();
+#endif
+}
+
+static void save_trigger(void) {
+  app_timer_start(tim_save_id, APP_TIMER_TICKS(2000, APP_TIMER_PRESCALER), NULL);
 }
 
 void app_on_connected(void) {
+  print("app.on_connected\n");
   start_anim(ANIM_CONNECT);
 }
 
 void app_on_disconnected(void) {
+  print("app.on_disconnected\n");
   start_anim(ANIM_DISCONNECT);
+}
+
+void app_on_data(uint8_t *data, uint16_t len) {
+  if (len < 2) return;
+  bool trigger_save = TRUE;
+  int i;
+  for (i = 0; i < len; i++) {
+    print("%c", data[i]);
+  }
+  print("\n");
+  if (data[0] == 'i') {
+    int intens = atoin((char *)&data[1], 10, len-1);
+    intens = MIN(10, intens);
+    intens = MAX(0, intens);
+    lamp_set_intensity(intens, TRUE);
+  }
+  else if (data[0] == 'c') {
+    uint32_t rgb = atoin((char *)&data[1], 16, len-1);
+    lamp_set_color(rgb, TRUE);
+  }
+  else if (len == 4 && strncmp((char *)data, "warm", 4) == 0) {
+    lamp_set_color(0xff9911, TRUE);
+  }
+  else if (len == 4 && strncmp((char *)data, "cold", 4) == 0) {
+    lamp_set_color(0xdddddd, TRUE);
+  }
+  else if (len == 3 && strncmp((char *)data, "red", 3) == 0) {
+    lamp_set_color(0xff0000, TRUE);
+  }
+  else if (len == 5 && strncmp((char *)data, "green", 5) == 0) {
+    lamp_set_color(0x00ff00, TRUE);
+  }
+  else if (len == 4 && strncmp((char *)data, "blue", 4) == 0) {
+    lamp_set_color(0x0000ff, TRUE);
+  }
+  else if (len == 4 && strncmp((char *)data, "cyan", 4) == 0) {
+    lamp_set_color(0x00ffff, TRUE);
+  }
+  else if (len == 6 && strncmp((char *)data, "yellow", 6) == 0) {
+    lamp_set_color(0xffff00, TRUE);
+  }
+  else if (len == 6 && strncmp((char *)data, "orange", 6) == 0) {
+    lamp_set_color(0xff8800, TRUE);
+  }
+  else if (len == 7 && strncmp((char *)data, "magenta", 7) == 0) {
+    lamp_set_color(0xff00ff, TRUE);
+  }
+  else if (len == 5 && strncmp((char *)data, "white", 5) == 0) {
+    lamp_set_color(0xdddddd, TRUE);
+  }
+  else if (len == 6 && strncmp((char *)data, "random", 6) == 0) {
+    lamp_set_color(0, TRUE);
+  }
+  else if (len == 5 && strncmp((char *)data, "error", 5) == 0) {
+    start_anim(ANIM_ERROR);
+    trigger_save = false;
+  } else {
+    trigger_save = false;
+  }
+  if (trigger_save) {
+    save_trigger();
+  }
 }
 
 void app_init(void) {
   uint32_t err_code;
+  print("app.init\n");
   memset(&app, 0, sizeof(app));
-  app.lamp_rgb = 0x442208;
-  print("app: starting test timer\n");
 
-  {
-    err_code = app_timer_create(&tim_id, APP_TIMER_MODE_SINGLE_SHOT, anim_timer);
-    print("app: tim_creat res %i\n", err_code);
-  }
+  err_code = app_timer_create(&tim_anim_id, APP_TIMER_MODE_SINGLE_SHOT, anim_timer);
+  print("app: tim_anim creat res %i\n", err_code);
+  err_code = app_timer_create(&tim_lamp_id, APP_TIMER_MODE_SINGLE_SHOT, lamp_timer);
+  print("app: tim_lamp creat res %i\n", err_code);
+  err_code = app_timer_create(&tim_save_id, APP_TIMER_MODE_SINGLE_SHOT, save_timer);
+  print("app: tim_save creat res %i\n", err_code);
+  nrf_drv_spi_config_t config = {                                                            \
+      .sck_pin      = NRF_DRV_SPI_PIN_NOT_USED,
+      .mosi_pin     = PIN_MOSI_NUMBER, //NRF_DRV_SPI_PIN_NOT_USED,
+      .miso_pin     = NRF_DRV_SPI_PIN_NOT_USED,
+      .ss_pin       = NRF_DRV_SPI_PIN_NOT_USED,
+      .irq_priority = SPI_DEFAULT_CONFIG_IRQ_PRIORITY,
+      .orc          = 0xFF,
+      .frequency    = NRF_DRV_SPI_FREQ_4M,
+      .mode         = NRF_DRV_SPI_MODE_3,
+      .bit_order    = NRF_DRV_SPI_BIT_ORDER_MSB_FIRST,
+  };
+  err_code = nrf_drv_spi_init(&spi, &config, spi_handler);
+  print("app: spi_init res %i\n", err_code);
 
-  print("app: starting test spi\n");
+  rand_seed(0x12312312);
 
-  {
+#ifdef TEST_FLASH
+  memset(_flash, 0xff, sizeof(_flash));
+#endif
 
-    nrf_drv_spi_config_t config = {                                                            \
-        .sck_pin      = NRF_DRV_SPI_PIN_NOT_USED,
-        .mosi_pin     = PIN_MOSI_NUMBER, //NRF_DRV_SPI_PIN_NOT_USED,
-        .miso_pin     = NRF_DRV_SPI_PIN_NOT_USED,
-        .ss_pin       = NRF_DRV_SPI_PIN_NOT_USED,
-        .irq_priority = SPI_DEFAULT_CONFIG_IRQ_PRIORITY,
-        .orc          = 0xFF,
-        .frequency    = NRF_DRV_SPI_FREQ_4M,
-        .mode         = NRF_DRV_SPI_MODE_3,
-        .bit_order    = NRF_DRV_SPI_BIT_ORDER_MSB_FIRST,
-    };
-    err_code = nrf_drv_spi_init(&spi, &config, spi_handler);
-    print("app: spi_init res %i\n", err_code);
+  tnv_init(&app.tnv,
+      (uint8_t *)((BLE_FLASH_PAGE_END - 1) * BLE_FLASH_PAGE_SIZE),
+      flash_write_fn, flash_erase_fn);
 
-    app_lamp_set(app.lamp_rgb);
+  //read_settings();
+  app.lamp_intens = 4;
+  lamp_set_color(0xff9911, FALSE);
+  print("app.init finished\n");
+}
 
-  }
+void HardFault_process(HardFault_stack_t * p_stack)
+{
+  while(1);
 }
