@@ -47,11 +47,13 @@ void tnv_init(tnv_t *tnv,
               tnv_buf_write_fn_t write,
               tnv_buf_erase_fn_t erase);
 
-void tnv_set(tnv_t *tnv, uint8_t id, uint8_t bits, uint32_t value);
+void tnv_set(tnv_t *tnv, uint8_t id, uint32_t value);
 
 uint32_t tnv_get(tnv_t *tnv, uint8_t id, uint32_t def);
 
 uint32_t tnv_commit(tnv_t *tnv);
+
+void tnv_reload(tnv_t *tnv);
 
 
 #endif /* TNV_H_ */

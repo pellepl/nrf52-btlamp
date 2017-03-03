@@ -15,6 +15,9 @@
 #define TNV_ID_BITS               4
 #define TNV_LEN_BITS              5
 
+#define TIME_COMMIT_MS            10000
+#define COLOR_DEFAULT             0xffaa22
+
 void app_init(void);
 void app_on_connected(void);
 void app_on_disconnected(void);

@@ -8,7 +8,7 @@
 static void _tnv_write(_stream *bs, uint32_t id, uint32_t val, uint8_t len) {
   uint8_t buf[4];
   int i;
-  for (i = 0; i < 4; i++) {
+  for (i = 0; i < 3; i++) {
     buf[i] = (val >> (i*8)) & 0xff;
   }
   uint8_t *d = buf;
@@ -33,21 +33,29 @@ static void _tnv_read(tnv_t *tnv,_stream *str) {
     }
     if (last_pos + TNV_LEN_BITS >= TNV_BUF_SIZE*8) break;
     uint8_t len = _strread(str, TNV_LEN_BITS) + 1;
+    uint8_t len2 = len;
     if (last_pos + len >= TNV_BUF_SIZE*8) break;
     tnv->cache[id].bits = len -1;
     uint32_t value = 0;
     while (len > 0) {
       uint8_t ch = len > 8 ? 8 : len;
       uint8_t d = _strread(str, ch);
-      value = (value << ch) | d;
+      value |= d << (len2 - len);
       len -= ch;
     }
     tnv->cache[id].value = value;
     tnv->cache[id].defined = 1;
     tnv->cache[id].dirty = 0;
+    //print("tnv.rd %i=%08x [%i]\n", id, value, len2);
     last_pos = bitmanio_getpos8(str);
   } while (id != end_id);
   bitmanio_setpos8(str, last_pos);
+}
+
+static uint32_t _msb(uint32_t d) {
+  uint32_t b = 32;
+  while (--b && (d & (1<<b))==0);
+  return b+1;
 }
 
 void tnv_init(tnv_t *tnv,
@@ -62,8 +70,14 @@ void tnv_init(tnv_t *tnv,
   _tnv_read(tnv, &tnv->str);
 }
 
-void tnv_set(tnv_t *tnv, uint8_t id, uint8_t bits, uint32_t value) {
-  tnv->cache[id].bits = bits - 1;
+void tnv_reload(tnv_t *tnv) {
+  print("tnv.reload\n");
+  bitmanio_init_stream8(&tnv->str, tnv->buf);
+  _tnv_read(tnv, &tnv->str);
+}
+
+void tnv_set(tnv_t *tnv, uint8_t id, uint32_t value) {
+  tnv->cache[id].bits = _msb(value) - 1;
   tnv->cache[id].value = value;
   tnv->cache[id].defined = 1;
   tnv->cache[id].dirty = 1;
@@ -73,7 +87,7 @@ uint32_t tnv_get(tnv_t *tnv, uint8_t id, uint32_t def) {
   if (tnv->cache[id].defined) {
     return tnv->cache[id].value;
   }
-  tnv_set(tnv, id, 32, def);
+  tnv_set(tnv, id, def);
   return def;
 }
 

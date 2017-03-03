@@ -478,15 +478,10 @@ static bool _app_inited = FALSE;
 
 void start_softdevice(void) {
   uint32_t err_code;
-  print("main: ble_stack_init\n");
   ble_stack_init();
-  print("main: gap_params_init\n");
   gap_params_init();
-  print("main: services_init\n");
   services_init();
-  print("main: advertising_init\n");
   advertising_init();
-  print("main: conn_params_init\n");
   conn_params_init();
   if (!_app_inited) {
     _app_inited = TRUE;

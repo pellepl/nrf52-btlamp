@@ -25,12 +25,14 @@
 #define ANIM_NONE         0
 #define ANIM_CONNECT      1
 #define ANIM_DISCONNECT   2
-#define ANIM_ERROR        3
+#define ANIM_WRITE        3
+#define ANIM_ERROR        4
 
 #define TNV_RGB           1
 #define TNV_INTENSITY     2
+#define TNV_USER_VAL      15
 
-#define TEST_FLASH
+static void settings_read(void);
 
 typedef struct anim_s {
   uint32_t rgb;
@@ -60,6 +62,7 @@ static struct app {
   uint32_t lamp_intens;
   volatile bool lamp_dirty;
   volatile bool lamp_tx;
+  volatile bool factory_reset;
   tnv_t tnv;
 } app;
 
@@ -123,14 +126,18 @@ static void lamp_set_color(uint32_t rgb, bool store) {
     app.rgb[i] = rgb ? rgb : (rand_next() & 0xffffff);
   }
   lamp_update();
-  if (store) tnv_set(&app.tnv, TNV_RGB, 32, rgb);
+  if (store) tnv_set(&app.tnv, TNV_RGB, rgb);
 }
 
 static void lamp_set_intensity(uint32_t i, bool store) {
   app.lamp_intens = i;
   print("app.lamp_intensity:%i\n", i);
   lamp_update();
-  if (store) tnv_set(&app.tnv, TNV_INTENSITY, 4, i);
+  if (store) tnv_set(&app.tnv, TNV_INTENSITY, i);
+}
+
+static void lamp_store_user_value(uint32_t x) {
+  tnv_set(&app.tnv, TNV_USER_VAL, x);
 }
 
 
@@ -170,6 +177,13 @@ static void anim_timer(void * p_context) {
     call_again = app.anim_ix >= WS2812B_LEDS*5 ? 0 : 40;
     break;
   }
+  case ANIM_WRITE: {
+    memset(app.rgb, 0, sizeof(app.rgb));
+    app.rgb[(5*WS2812B_LEDS - app.anim_ix) % WS2812B_LEDS] = 0xff00ff;
+    lamp_update();
+    call_again = app.anim_ix >= WS2812B_LEDS*1 ? 0 : 40;
+    break;
+  }
   case ANIM_ERROR: {
     int i;
     memset(app.rgb, 0, sizeof(app.rgb));
@@ -197,11 +211,8 @@ static void lamp_timer(void * p_context) {
   lamp_update();
 }
 
-#ifdef TEST_FLASH
-static uint32_t _flash[1024/4];
-#endif
-
 uint32_t flash_write_fn(uint8_t *buf, uint32_t offs, uint32_t len, uint8_t *src) {
+  start_anim(ANIM_WRITE);
   // align src to 32 bits
   uint32_t start = (uint32_t)(buf + offs);
   uint32_t end = (uint32_t)(buf + offs + len);
@@ -213,58 +224,51 @@ uint32_t flash_write_fn(uint8_t *buf, uint32_t offs, uint32_t len, uint8_t *src)
   memcpy((uint8_t *)wbuf + start_align_pre, src, len);
   uint32_t *flash_addr = (uint32_t *)(start - start_align_pre);
   print("app.flash write @ %08x, len %i\n", flash_addr, aligned_size);
-#ifdef TEST_FLASH
-  int i;
-  for (i = 0; i < len; i++) {
-    uint32_t ix = (((uint32_t)flash_addr) - (uint32_t)app.tnv.buf) / 4 + i;
-    _flash[ix] &= ~wbuf[i];
-  }
-  return 0;
-#else
-  return ble_flash_block_write(flash_addr, wbuf, aligned_size/4);
-#endif
+  uint32_t err_code;
+  err_code = softdevice_handler_sd_disable();
+
+  err_code = ble_flash_block_write(flash_addr, wbuf, aligned_size/4);
+
+  print("app.softdevice enabling\n");
+
+  start_softdevice();
+  return err_code;
 }
 
 uint32_t flash_erase_fn(uint8_t *buf) {
-#ifdef TEST_FLASH
-  memset(_flash, 0xff, sizeof(_flash));
-  print("app.flash erase page TEST\n");
-  return 0;
-#else
-  uint8_t page = (uint32_t)buf / BLE_FLASH_PAGE_SIZE;
-  uint32_t err_code = ble_flash_page_erase(page);
-  print("app.flash erase page %i res %i\n", page, err_code);
-  return err_code;
-#endif
-}
-
-
-static void save_timer(void * p_context) {
-  tnv_commit(&app.tnv);
-#if 0
+  lamp_set_color(0x880088, FALSE);
   uint32_t err_code;
   err_code = softdevice_handler_sd_disable();
   print("app.softdevice disabled res %i\n", err_code);
   volatile int a = 0x2000;
   while(a--);
 
-  print("app.erase last page\n");
-  a = 0x2000;
-  while(a--);
-
-  err_code = ble_flash_page_erase(BLE_FLASH_PAGE_END-1);
-  print("app.erase last page res %i\n", err_code);
-
+  uint8_t page = (uint32_t)buf / BLE_FLASH_PAGE_SIZE;
+  err_code = ble_flash_page_erase(page);
+  print("app.flash erase page %i res %i\n", page, err_code);
 
   print("app.softdevice enabling\n");
   a = 0x2000;
   while(a--);
   start_softdevice();
-#endif
+  lamp_set_color(app.lamp_rgb, FALSE);
+  return err_code;
+}
+
+
+static void save_timer(void * p_context) {
+  if (app.factory_reset) {
+    app.factory_reset = FALSE;
+    flash_erase_fn(app.tnv.buf);
+    settings_read();
+  } else {
+    tnv_commit(&app.tnv);
+  }
 }
 
 static void save_trigger(void) {
-  app_timer_start(tim_save_id, APP_TIMER_TICKS(2000, APP_TIMER_PRESCALER), NULL);
+  app_timer_stop(tim_save_id);
+  app_timer_start(tim_save_id, APP_TIMER_TICKS(TIME_COMMIT_MS, APP_TIMER_PRESCALER), NULL);
 }
 
 void app_on_connected(void) {
@@ -291,12 +295,16 @@ void app_on_data(uint8_t *data, uint16_t len) {
     intens = MAX(0, intens);
     lamp_set_intensity(intens, TRUE);
   }
+  else if (data[0] == 's') {
+    uint32_t x = atoin((char *)&data[1], 16, len-1);
+    lamp_store_user_value(x);
+  }
   else if (data[0] == 'c') {
     uint32_t rgb = atoin((char *)&data[1], 16, len-1);
     lamp_set_color(rgb, TRUE);
   }
   else if (len == 4 && strncmp((char *)data, "warm", 4) == 0) {
-    lamp_set_color(0xff9911, TRUE);
+    lamp_set_color(COLOR_DEFAULT, TRUE);
   }
   else if (len == 4 && strncmp((char *)data, "cold", 4) == 0) {
     lamp_set_color(0xdddddd, TRUE);
@@ -331,7 +339,15 @@ void app_on_data(uint8_t *data, uint16_t len) {
   else if (len == 5 && strncmp((char *)data, "error", 5) == 0) {
     start_anim(ANIM_ERROR);
     trigger_save = false;
-  } else {
+  }
+  else if (len == 6 && strncmp((char *)data, "update", 6) == 0) {
+    tnv_reload(&app.tnv);
+    trigger_save = false;
+  }
+  else if (len == 5 && strncmp((char *)data, "reset", 5) == 0) {
+    app.factory_reset = TRUE;
+  }
+  else {
     trigger_save = false;
   }
   if (trigger_save) {
@@ -339,9 +355,22 @@ void app_on_data(uint8_t *data, uint16_t len) {
   }
 }
 
+static void settings_read(void) {
+  tnv_init(&app.tnv,
+      (uint8_t *)((BLE_FLASH_PAGE_END - 1) * BLE_FLASH_PAGE_SIZE),
+      flash_write_fn, flash_erase_fn);
+  app.lamp_intens = tnv_get(&app.tnv, TNV_INTENSITY, 5);
+  app.lamp_rgb = tnv_get(&app.tnv, TNV_RGB, COLOR_DEFAULT);
+  uint32_t user_val = tnv_get(&app.tnv, TNV_USER_VAL, 0);
+  print("tnv.int:%i\n", app.lamp_intens);
+  print("tnv.rgb:%08x\n", app.lamp_rgb);
+  print("tnv.usr:%08x\n", user_val);
+  lamp_set_color(app.lamp_rgb, FALSE);
+}
+
 void app_init(void) {
   uint32_t err_code;
-  print("app.init\n");
+  print("\n\napp.init\n");
   memset(&app, 0, sizeof(app));
 
   err_code = app_timer_create(&tim_anim_id, APP_TIMER_MODE_SINGLE_SHOT, anim_timer);
@@ -365,18 +394,7 @@ void app_init(void) {
   print("app: spi_init res %i\n", err_code);
 
   rand_seed(0x12312312);
-
-#ifdef TEST_FLASH
-  memset(_flash, 0xff, sizeof(_flash));
-#endif
-
-  tnv_init(&app.tnv,
-      (uint8_t *)((BLE_FLASH_PAGE_END - 1) * BLE_FLASH_PAGE_SIZE),
-      flash_write_fn, flash_erase_fn);
-
-  //read_settings();
-  app.lamp_intens = 4;
-  lamp_set_color(0xff9911, FALSE);
+  settings_read();
   print("app.init finished\n");
 }
 
