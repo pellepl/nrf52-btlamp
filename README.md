@@ -46,6 +46,12 @@ The connectors on the backside are the debug port and the uart. The pins stickin
 
 When all was finished and installed in the actual lamp, it turned out flickering and behaving badly. After some head scratching it turned out the 5V charger I used was crap, so after switching it to a proper one all became dandy.
 
+The final thing became like this:
+
+![back](https://raw.githubusercontent.com/pellepl/nrf52-btlamp/master/doc/psyschroom.jpg)
+
+It does not look much to the world, but believe me - this little shroom can become quite psycadelic!
+
 I control the lamp using [this android app](https://github.com/NordicSemiconductor/Android-nRF-UART). Someday I'll do a proper app I gather.
 
 
