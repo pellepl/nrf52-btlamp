@@ -32,13 +32,13 @@ Apart from the official SDK from Nordic, I stole some code from these repositori
 
 I bought the PTR5628 board from aliexpress. It is tiny, smaller than the nail of my little finger. Soooo cute! Soldered wires to Vcc, GND, SWDIO, SWDCLK, reset, UART and an extra pin for SPI controlling the led ring. Behold my soldering skills!
 
-![prototyping](https://raw.githubusercontent.com/pellepl/nrf52-btlamp/master/docs/prototyping.jpg)
+![prototyping](https://raw.githubusercontent.com/pellepl/nrf52-btlamp/master/doc/prototyping.jpg)
 
 After finished tinkering, I soldered together a more clean, minimalistic designed, rock-solid, industrial version of the ratnest above.
 
-![front](https://raw.githubusercontent.com/pellepl/nrf52-btlamp/master/docs/front.jpg)
+![front](https://raw.githubusercontent.com/pellepl/nrf52-btlamp/master/doc/front.jpg)
 
-![back](https://raw.githubusercontent.com/pellepl/nrf52-btlamp/master/docs/back.jpg)
+![back](https://raw.githubusercontent.com/pellepl/nrf52-btlamp/master/doc/back.jpg)
 
 Do I need to mention my soldering skills again? Guessed not...! I might add that I hotglued the crap together after taking the pictures.
 
