@@ -1,6 +1,5 @@
 # Source files common to all targets
 CFILES += \
-  $(SDK_ROOT)/components/libraries/button/app_button.c \
   $(SDK_ROOT)/components/libraries/util/app_error.c \
   $(SDK_ROOT)/components/libraries/util/app_error_weak.c \
   $(SDK_ROOT)/components/libraries/fifo/app_fifo.c \

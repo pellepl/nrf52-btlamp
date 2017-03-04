@@ -108,10 +108,10 @@ DEPFILES = $(CFILES:%.c=${builddir}/%.d)
 ALLOBJFILES  = $(SOBJFILES)
 ALLOBJFILES += $(OBJFILES)
 
-DEPENDENCIES = $(DEPFILES) 
+DEPENDENCIES = $(DEPFILES)
 
 # link object files, create binary for flashing
-$(BINARY): mkdirs $(sdk) $(ALLOBJFILES)
+$(BINARY): .mkdirs $(sdk) $(ALLOBJFILES)
 	@echo "... linking"
 	@${LD} $(LFLAGS) -Map ${builddir}/$(BINARY).map -o ${builddir}/$(BINARY).elf $(ALLOBJFILES) $(LIBS)
 	@${OBJCOPY} $(OFLAGS_BIN) ${builddir}/$(BINARY).out
@@ -142,11 +142,13 @@ $(DEPFILES) : ${builddir}/%.d:%.c
 		sed 's,\($*\)\.o[ :]*, ${builddir}/\1.o $@ : ,g' < $@.$$$$ > $@; \
 		rm -f $@.$$$$
 
-all: info setup $(BINARY)
+# builds binary, installs softdevice and binary
+all: $(BINARY) deploy
 
-setup: download unpack
+# downloads sdk and softdevice, unpacks and massages them
+setup: .download .unpack
 
-unpack: $(softdev) $(sdk)
+.unpack: $(softdev) $(sdk)
 
 $(softdev): $(softdevdir)
 	@ln -s $(wildcard ${softdevdir}/*.hex) $@
@@ -166,7 +168,7 @@ $(sdkdir): $(sdkp)
 	@find $(sdkdir) -type f -name "*.c" -exec sed -i 's/printf/print/g' {} +
 	@mv $(sdkdir)/components/libraries/util/app_error.h $(sdkdir)/components/libraries/util/app_error.h.orig
 
-download: mkdirs $(softdevp) $(sdkp)
+.download: .mkdirs $(softdevp) $(sdkp)
 $(softdevp):
 	@echo ... downloading softdevice
 	-@${MKDIR} ${downloaddir}
@@ -178,7 +180,7 @@ $(sdkp):
 	-@${MKDIR} ${downloaddir}/${sdkdir}
 	@wget -q -O $@ https://www.nordicsemi.com/eng/nordic/download_resource/54291/51/23083258
 	
-mkdirs:
+.mkdirs:
 	-@${MKDIR} ${builddir}
 
 clean:
