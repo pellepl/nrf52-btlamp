@@ -16,6 +16,7 @@
 #define TNV_LEN_BITS              5
 
 #define TIME_COMMIT_MS            10000
+#define TIME_START_LAMP_MS        230
 #define COLOR_DEFAULT             0xffaa22
 
 void app_init(void);

@@ -51,7 +51,7 @@ static const uint8_t GAMMA[] = {
 
 APP_TIMER_DEF(tim_anim_id);
 APP_TIMER_DEF(tim_lamp_id);
-APP_TIMER_DEF(tim_save_id);
+APP_TIMER_DEF(tim_ctrl_id);
 const nrf_drv_spi_t spi = NRF_DRV_SPI_INSTANCE(0);
 static struct app {
   uint8_t spi_ws_buf[RGB_DATA_LEN];
@@ -63,6 +63,7 @@ static struct app {
   volatile bool lamp_dirty;
   volatile bool lamp_tx;
   volatile bool factory_reset;
+  volatile bool startup;
   tnv_t tnv;
 } app;
 
@@ -256,19 +257,23 @@ uint32_t flash_erase_fn(uint8_t *buf) {
 }
 
 
-static void save_timer(void * p_context) {
-  if (app.factory_reset) {
+static void control_timer(void * p_context) {
+  if (app.startup) {
+    app.startup = FALSE;
+    lamp_set_color(app.lamp_rgb, FALSE);
+  } else if (app.factory_reset) {
     app.factory_reset = FALSE;
     flash_erase_fn(app.tnv.buf);
     settings_read();
+    lamp_set_color(app.lamp_rgb, FALSE);
   } else {
     tnv_commit(&app.tnv);
   }
 }
 
 static void save_trigger(void) {
-  app_timer_stop(tim_save_id);
-  app_timer_start(tim_save_id, APP_TIMER_TICKS(TIME_COMMIT_MS, APP_TIMER_PRESCALER), NULL);
+  app_timer_stop(tim_ctrl_id);
+  app_timer_start(tim_ctrl_id, APP_TIMER_TICKS(TIME_COMMIT_MS, APP_TIMER_PRESCALER), NULL);
 }
 
 void app_on_connected(void) {
@@ -365,7 +370,6 @@ static void settings_read(void) {
   print("tnv.int:%i\n", app.lamp_intens);
   print("tnv.rgb:%08x\n", app.lamp_rgb);
   print("tnv.usr:%08x\n", user_val);
-  lamp_set_color(app.lamp_rgb, FALSE);
 }
 
 void app_init(void) {
@@ -377,7 +381,7 @@ void app_init(void) {
   print("app: tim_anim creat res %i\n", err_code);
   err_code = app_timer_create(&tim_lamp_id, APP_TIMER_MODE_SINGLE_SHOT, lamp_timer);
   print("app: tim_lamp creat res %i\n", err_code);
-  err_code = app_timer_create(&tim_save_id, APP_TIMER_MODE_SINGLE_SHOT, save_timer);
+  err_code = app_timer_create(&tim_ctrl_id, APP_TIMER_MODE_SINGLE_SHOT, control_timer);
   print("app: tim_save creat res %i\n", err_code);
   nrf_drv_spi_config_t config = {                                                            \
       .sck_pin      = NRF_DRV_SPI_PIN_NOT_USED,
@@ -395,6 +399,9 @@ void app_init(void) {
 
   rand_seed(0x12312312);
   settings_read();
+  app.startup = TRUE;
+  app_timer_start(tim_ctrl_id, APP_TIMER_TICKS(TIME_START_LAMP_MS, APP_TIMER_PRESCALER), NULL);
+
   print("app.init finished\n");
 }
 
